@@ -25,6 +25,7 @@
         <maven.compiler.target>1.8</maven.compiler.target>
         <synapse.version>4.0.0-wso2v215</synapse.version>
         <gson.version>2.11.0</gson.version>
+        <maven.javadoc.skip>true</maven.javadoc.skip>
     </properties>
 
     <dependencies>
