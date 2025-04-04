@@ -36,5 +36,33 @@ public class Constants {
 
     public static final String RESPONSE_VARIABLE = "responseVariable";
     public static final String OVERWRITE_BODY = "overwriteBody";
+    public static final String CONNECTION_NAME = "name";
+    public static final String BASE = "base";
+    public static final String REFRESH_TOKEN = "refreshToken";
+    public static final String CLIENT_ID = "clientId";
+    public static final String CLIENT_SECRET = "clientSecret";
+    public static final String TOKEN_ENDPOINT = "tokenEndpoint";
+    public static final String DEVELOPER_TOKEN = "developerToken";
+    public static final String PROPERTY_BASE = "uri.var.base";
+    public static final String PROPERTY_ACCESS_TOKEN = "_ACTIVE_ACCESS_TOKEN_";
+    public static final String PROPERTY_ERROR_CODE = "ERROR_CODE";
+    public static final String PROPERTY_ERROR_MESSAGE = "ERROR_MESSAGE";
+    public static final String GENERAL_ERROR_MSG = "Connector encountered an error: ";
+
+    public static class ErrorCodes {
+        public static final String GENERAL_ERROR = "701001";
+        public static final String INVALID_CONFIG = "701002";
+        public static final String TOKEN_ERROR = "701003";
+    }
+
+    public static class OAuth2 {
+
+        public static final String GRANT_TYPE = "grant_type";
+        public static final String CLIENT_ID = "client_id";
+        public static final String CLIENT_SECRET = "client_secret";
+        public static final String REFRESH_TOKEN = "refresh_token";
+        public static final String ACCESS_TOKEN = "access_token";
+        public static final String EXPIRES_IN = "expires_in";
+    }
 }
 
