@@ -14,9 +14,9 @@
     <packaging>jar</packaging>
 
     <scm>
-        <connection>scm:git:https://github.com/wso2-extension/mi-connector-core.git</connection>
-        <developerConnection>scm:git:https://github.com/wso2-extension/mi-connector-core.git</developerConnection>
-        <url>https://github.com/wso2-extension/mi-connector-core.git</url>
+        <connection>scm:git:https://github.com/wso2-extensions/mi-connector-core.git</connection>
+        <developerConnection>scm:git:https://github.com/wso2-extensions/mi-connector-core.git</developerConnection>
+        <url>https://github.com/wso2-extensions/mi-connector-core.git</url>
         <tag>HEAD</tag>
     </scm>
 
