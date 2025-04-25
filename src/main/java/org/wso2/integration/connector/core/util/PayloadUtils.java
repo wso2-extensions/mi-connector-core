@@ -17,6 +17,8 @@
  */
 package org.wso2.integration.connector.core.util;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import org.apache.axiom.om.OMAbstractFactory;
 import org.apache.axiom.om.OMElement;
 import org.apache.axiom.om.OMFactory;
@@ -50,13 +52,15 @@ import javax.xml.stream.XMLStreamException;
 public final class PayloadUtils {
 
     // Content Types
-    private static final String APPLICATION_XML = "application/xml";
-    private static final String APPLICATION_JSON = "application/json";
-    private static final String TEXT_XML = "text/xml";
-    private static final String TEXT_CSV = "text/csv";
-    private static final String TEXT_PLAIN = "text/plain";
+    public static final String APPLICATION_XML = "application/xml";
+    public static final String APPLICATION_JSON = "application/json";
+    public static final String TEXT_XML = "text/xml";
+    public static final String TEXT_CSV = "text/csv";
+    public static final String TEXT_PLAIN = "text/plain";
+    public static final String JSON_OBJECT_START = "'{";
+    public static final String JSON_OBJECT_END = "}'";
 
-    private static final QName TEXT_ELEMENT = new QName("http://ws.apache.org/commons/ns/payload",
+    public static final QName TEXT_ELEMENT = new QName("http://ws.apache.org/commons/ns/payload",
             "text");
 
     private PayloadUtils() {
@@ -239,6 +243,21 @@ public final class PayloadUtils {
         }
         textElement.setText(content);
         return textElement;
+    }
+
+    /**
+     * Removes quotes if exist
+     *
+     * @param content   Content to be checked
+     * @return          Content without quotes
+     */
+    public static String removeQuotesIfExist(String content) {
+
+        if (StringUtils.length(StringUtils.trim(content)) > 4
+                && content.startsWith(JSON_OBJECT_START) && content.endsWith(JSON_OBJECT_END)) {
+            return content.substring(1, content.length() - 1);
+        }
+        return content;
     }
 
 }
