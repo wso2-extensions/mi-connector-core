@@ -118,15 +118,7 @@ public abstract class AbstractConnector extends AbstractMediator implements Conn
 
         ConnectorResponse response = new DefaultConnectorResponse();
         if (overwriteBody != null && overwriteBody) {
-            org.apache.axis2.context.MessageContext axisMsgCtx =
-                    ((Axis2MessageContext) messageContext).getAxis2MessageContext();
-            try {
-                JsonUtil.getNewJsonPayload(axisMsgCtx, payload, true, true);
-            } catch (AxisFault e) {
-                handleException("Error setting response payload", e, messageContext);
-            }
-            axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.MESSAGE_TYPE, Constants.CONTENT_TYPE_JSON);
-            axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.CONTENT_TYPE, Constants.CONTENT_TYPE_JSON);
+            overwritePayload(messageContext, payload);
         } else {
             response.setPayload(JsonParser.parseString(payload));
         }
@@ -141,20 +133,25 @@ public abstract class AbstractConnector extends AbstractMediator implements Conn
 
         ConnectorResponse response = new DefaultConnectorResponse();
         if (overwriteBody != null && overwriteBody) {
-            org.apache.axis2.context.MessageContext axisMsgCtx =
-                    ((Axis2MessageContext) messageContext).getAxis2MessageContext();
-            try {
-                JsonUtil.getNewJsonPayload(axisMsgCtx, payload.toString(), true, true);
-            } catch (AxisFault e) {
-                handleException("Error setting response payload", e, messageContext);
-            }
-            axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.MESSAGE_TYPE, Constants.CONTENT_TYPE_JSON);
-            axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.CONTENT_TYPE, Constants.CONTENT_TYPE_JSON);
+            overwritePayload(messageContext, payload.toString());
         } else {
             response.setPayload(payload);
         }
         response.setHeaders(headers);
         response.setAttributes(attributes);
         messageContext.setVariable(responseVariable, response);
+    }
+
+    private void overwritePayload(MessageContext messageContext, String payload) {
+
+        org.apache.axis2.context.MessageContext axisMsgCtx =
+                ((Axis2MessageContext) messageContext).getAxis2MessageContext();
+        try {
+            JsonUtil.getNewJsonPayload(axisMsgCtx, payload, true, true);
+        } catch (AxisFault e) {
+            handleException("Error overriding the message body with connector response.", e, messageContext);
+        }
+        axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.MESSAGE_TYPE, Constants.CONTENT_TYPE_JSON);
+        axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.CONTENT_TYPE, Constants.CONTENT_TYPE_JSON);
     }
 }
