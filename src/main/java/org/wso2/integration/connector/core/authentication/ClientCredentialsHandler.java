@@ -47,6 +47,9 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * The ClientCredentialsHandler class is used to handle the client credentials based authentication.
+ */
 public class ClientCredentialsHandler extends AbstractConnector {
 
     private static final Log log = LogFactory.getLog(ClientCredentialsHandler.class);
@@ -66,10 +69,10 @@ public class ClientCredentialsHandler extends AbstractConnector {
         }
         messageContext.setProperty(Constants.PROPERTY_BASE, base);
 
-        String clientId = (String) getParameter(messageContext, Constants.CLIENT_ID);
-        String clientSecret = (String) getParameter(messageContext, Constants.CLIENT_SECRET);
-        String tokenEndpoint = (String) getParameter(messageContext, Constants.TOKEN_ENDPOINT);
-        String refreshToken = (String) getParameter(messageContext, Constants.REFRESH_TOKEN);
+        String clientId = (String) ConnectorUtils.lookupTemplateParamater(messageContext, Constants.CLIENT_ID);
+        String clientSecret = (String) ConnectorUtils.lookupTemplateParamater(messageContext, Constants.CLIENT_SECRET);
+        String tokenEndpoint = (String) ConnectorUtils.lookupTemplateParamater(messageContext, Constants.TOKEN_ENDPOINT);
+        String refreshToken = (String) ConnectorUtils.lookupTemplateParamater(messageContext, Constants.REFRESH_TOKEN);
 
         if (StringUtils.isBlank(clientId) || StringUtils.isBlank(clientSecret)
                 || StringUtils.isBlank(tokenEndpoint) || StringUtils.isBlank(refreshToken)){
