@@ -27,9 +27,6 @@ public class PoolState {
 
     public void open() {
 
-        if (state == OPEN) {
-            throw new IllegalStateException("Cannot transition to OPEN from state: " + state);
-        }
         this.state = OPEN;
     }
 
@@ -43,7 +40,7 @@ public class PoolState {
 
     public void close() {
 
-        if (state == CLOSED) {
+        if (state != HALF_OPEN) {
             throw new IllegalStateException("Cannot transition to CLOSED from state: " + state);
         }
         this.state = CLOSED;
