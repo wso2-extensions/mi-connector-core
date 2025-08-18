@@ -30,11 +30,14 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
 
     private static final Log log = LogFactory.getLog(CircuitBreakerConnectionPool.class);
 
+    private static final long DEFAULT_OPEN_DURATION_MILLIS = 60000;
+
     // Circuit breaker configuration
     private final PoolState poolState;
     private final int failureThreshold;
     private final long openDurationMillis;
     private final int openDurationProgressFactor;
+    private final long maxOpenDurationMillis;
 
     // Circuit breaker state variables
     private long currentOpenDurationMillis;
@@ -47,6 +50,7 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
         this.poolState = poolState;
         failureThreshold = configuration.getFailureThreshold();
         openDurationMillis = configuration.getOpenDurationMillis();
+        maxOpenDurationMillis = configuration.getMaxOpenDurationMillis();
         openDurationProgressFactor = configuration.getOpenDurationProgressFactor();
         failureCount = 0;
         currentOpenDurationMillis = openDurationMillis;
@@ -70,11 +74,11 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
             }
             return obj;
         } catch (ConnectException e) {
-            if (poolState.getState() == PoolState.OPEN) {
+            if (poolState.getState() == PoolState.CLOSED) {
                 failureCount++;
                 if (failureCount >= failureThreshold) {
                     log.warn(format("Circuit breaker tripped after %d failures. Switching to OPEN state.",
-                            failureCount)); // add further details
+                            failureCount));
                     tripBreaker();
                 }
             } else if (poolState.getState() == PoolState.HALF_OPEN) {
@@ -101,6 +105,13 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
 
     private long calculateNextOpenDuration() {
 
-        return currentOpenDurationMillis * openDurationProgressFactor;
+        long nextDuration;
+        nextDuration = currentOpenDurationMillis * openDurationProgressFactor;
+        if (nextDuration > maxOpenDurationMillis) {
+            nextDuration = maxOpenDurationMillis;
+        } else if (nextDuration < 0) {
+            nextDuration = DEFAULT_OPEN_DURATION_MILLIS;
+        }
+        return nextDuration;
     }
 }

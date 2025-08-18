@@ -41,8 +41,9 @@ public class Configuration {
     // Circuit Breaker related configurations
     private boolean isCircuitBreakerEnabled = false;
     private int failureThreshold = 10;
-    private int openDurationMillis = 60000;
+    private long openDurationMillis = 60000;
     private int openDurationProgressFactor = 1;
+    private long maxOpenDurationMillis = Long.MAX_VALUE;
 
     public Integer getMaxActiveConnections() {
 
@@ -209,12 +210,12 @@ public class Configuration {
         this.failureThreshold = failureThreshold;
     }
 
-    public int getOpenDurationMillis() {
+    public long getOpenDurationMillis() {
 
         return openDurationMillis;
     }
 
-    public void setOpenDurationMillis(int openDurationMillis) {
+    public void setOpenDurationMillis(long openDurationMillis) {
 
         this.openDurationMillis = openDurationMillis;
     }
@@ -227,5 +228,15 @@ public class Configuration {
     public void setOpenDurationProgressFactor(int openDurationProgressFactor) {
 
         this.openDurationProgressFactor = openDurationProgressFactor;
+    }
+
+    public long getMaxOpenDurationMillis() {
+
+        return maxOpenDurationMillis;
+    }
+
+    public void setMaxOpenDurationMillis(long maxOpenDurationMillis) {
+
+        this.maxOpenDurationMillis = maxOpenDurationMillis;
     }
 }
