@@ -38,6 +38,12 @@ public class Configuration {
     private Integer numTestsPerEvictionRun;
     private Long softMinEvictableIdleTimeMillis;
 
+    // Circuit Breaker related configurations
+    private boolean isCircuitBreakerEnabled = false;
+    private int failureThreshold = 10;
+    private int openDurationMillis = 60000;
+    private int openDurationProgressFactor = 1;
+
     public Integer getMaxActiveConnections() {
 
         return maxActiveConnections;
@@ -181,5 +187,45 @@ public class Configuration {
 
     public void setRetryCount(int retryCount) {
         this.retryCount = retryCount;
+    }
+
+    public boolean isCircuitBreakerEnabled() {
+
+        return isCircuitBreakerEnabled;
+    }
+
+    public void setCircuitBreakerEnabled(boolean circuitBreakerEnabled) {
+
+        isCircuitBreakerEnabled = circuitBreakerEnabled;
+    }
+
+    public int getFailureThreshold() {
+
+        return failureThreshold;
+    }
+
+    public void setFailureThreshold(int failureThreshold) {
+
+        this.failureThreshold = failureThreshold;
+    }
+
+    public int getOpenDurationMillis() {
+
+        return openDurationMillis;
+    }
+
+    public void setOpenDurationMillis(int openDurationMillis) {
+
+        this.openDurationMillis = openDurationMillis;
+    }
+
+    public int getOpenDurationProgressFactor() {
+
+        return openDurationProgressFactor;
+    }
+
+    public void setOpenDurationProgressFactor(int openDurationProgressFactor) {
+
+        this.openDurationProgressFactor = openDurationProgressFactor;
     }
 }
