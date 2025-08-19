@@ -17,6 +17,8 @@
  */
 package org.wso2.integration.connector.core.pool;
 
+import java.time.Instant;
+
 public class PoolState {
 
     public static final int OPEN = 0;
@@ -24,10 +26,12 @@ public class PoolState {
     public static final int CLOSED = 2;
 
     private int state = CLOSED;
+    private Instant openTime;
 
     public void open() {
 
         this.state = OPEN;
+        this.openTime = Instant.now();
     }
 
     public void halfOpen() {
@@ -44,10 +48,16 @@ public class PoolState {
             throw new IllegalStateException("Cannot transition to CLOSED from state: " + state);
         }
         this.state = CLOSED;
+        this.openTime = null; // Reset open time when closing
     }
 
     public int getState() {
 
         return state;
+    }
+
+    public Instant getOpenTime() {
+
+        return openTime;
     }
 }

@@ -42,7 +42,6 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
     // Circuit breaker state variables
     private long currentOpenDurationMillis;
     private int failureCount;
-    private Instant openTime;
 
     public CircuitBreakerConnectionPool(ConnectionFactory factory, Configuration configuration, PoolState poolState) {
 
@@ -60,7 +59,7 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
     public synchronized Object borrowObject() throws ConnectException {
 
         if (poolState.getState() == PoolState.OPEN) {
-            if (ChronoUnit.MILLIS.between(openTime, Instant.now()) >= currentOpenDurationMillis) {
+            if (ChronoUnit.MILLIS.between(poolState.getOpenTime(), Instant.now()) >= currentOpenDurationMillis) {
                 log.info("Switching circuit breaker to HALF_OPEN state after open duration expired.");
                 poolState.halfOpen();
             } else {
@@ -92,7 +91,6 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
     private void tripBreaker() {
 
         poolState.open();
-        openTime = Instant.now();
         currentOpenDurationMillis = calculateNextOpenDuration();
     }
 
