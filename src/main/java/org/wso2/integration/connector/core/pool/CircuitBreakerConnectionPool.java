@@ -57,7 +57,7 @@ public class CircuitBreakerConnectionPool extends ConnectionPool {
     }
 
     @Override
-    public Object borrowObject() throws ConnectException {
+    public synchronized Object borrowObject() throws ConnectException {
 
         if (poolState.getState() == PoolState.OPEN) {
             if (ChronoUnit.MILLIS.between(openTime, Instant.now()) >= currentOpenDurationMillis) {
