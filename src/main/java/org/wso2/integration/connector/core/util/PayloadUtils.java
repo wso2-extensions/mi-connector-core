@@ -210,11 +210,10 @@ public final class PayloadUtils {
             // Instead, remove all existing body children directly here without tree traversal.
             if (newElem != null) {
                 SOAPBody body = axis2MessageContext.getEnvelope().getBody();
-                Iterator children = body.getChildren();
+                Iterator<OMNode> children = body.getChildren();
                 while (children.hasNext()) {
-                    if (children.next() instanceof OMNode) {
-                        children.remove();
-                    }
+                    children.next();
+                    children.remove();
                 }
                 body.addChild(newElem);
             }
