@@ -18,8 +18,8 @@
 package org.wso2.integration.connector.core;
 
 import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.apache.axiom.om.OMElement;
 import org.apache.axis2.AxisFault;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.SynapseException;
@@ -29,6 +29,7 @@ import org.apache.synapse.core.axis2.Axis2MessageContext;
 import org.apache.synapse.data.connector.ConnectorResponse;
 import org.apache.synapse.data.connector.DefaultConnectorResponse;
 import org.apache.synapse.transport.passthru.PassThroughConstants;
+import org.wso2.integration.connector.core.exception.ContentBuilderException;
 import org.wso2.integration.connector.core.util.ConnectorUtils;
 import org.wso2.integration.connector.core.util.Constants;
 import org.wso2.integration.connector.core.util.PayloadUtils;
@@ -143,6 +144,21 @@ public abstract class AbstractConnector extends AbstractMediator implements Conn
         messageContext.setVariable(responseVariable, response);
     }
 
+    protected void handleConnectorResponse(MessageContext messageContext, String responseVariable,
+                                           Boolean overwriteBody, OMElement payload,
+                                           Map<String, Object> headers, Map<String, Object> attributes) {
+
+        ConnectorResponse response = new DefaultConnectorResponse();
+        if (overwriteBody != null && overwriteBody) {
+            overwriteXmlPayload(messageContext, payload);
+        } else {
+            response.setPayload(payload);
+        }
+        response.setHeaders(headers);
+        response.setAttributes(attributes);
+        messageContext.setVariable(responseVariable, response);
+    }
+
     private void overwritePayload(MessageContext messageContext, String payload) {
 
         org.apache.axis2.context.MessageContext axisMsgCtx =
@@ -154,6 +170,19 @@ public abstract class AbstractConnector extends AbstractMediator implements Conn
         }
         axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.MESSAGE_TYPE, Constants.CONTENT_TYPE_JSON);
         axisMsgCtx.setProperty(org.apache.axis2.Constants.Configuration.CONTENT_TYPE, Constants.CONTENT_TYPE_JSON);
+        axisMsgCtx.removeProperty(PassThroughConstants.NO_ENTITY_BODY);
+    }
+
+    private void overwriteXmlPayload(MessageContext messageContext, OMElement payload) {
+
+        org.apache.axis2.context.MessageContext axisMsgCtx =
+                ((Axis2MessageContext) messageContext).getAxis2MessageContext();
+        try {
+            PayloadUtils.setPayloadInEnvelope(axisMsgCtx, payload);
+        } catch (ContentBuilderException e) {
+            handleException("Error overriding the message body with connector XML response.", e, messageContext);
+        }
+        PayloadUtils.handleSpecialProperties(PayloadUtils.APPLICATION_XML, axisMsgCtx);
         axisMsgCtx.removeProperty(PassThroughConstants.NO_ENTITY_BODY);
     }
 }

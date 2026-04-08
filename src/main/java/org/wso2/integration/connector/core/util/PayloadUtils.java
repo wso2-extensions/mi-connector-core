@@ -17,14 +17,14 @@
  */
 package org.wso2.integration.connector.core.util;
 
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import org.apache.axiom.om.OMAbstractFactory;
 import org.apache.axiom.om.OMElement;
+import org.apache.axiom.om.OMNode;
 import org.apache.axiom.om.OMFactory;
 import org.apache.axiom.om.OMNamespace;
 import org.apache.axiom.om.OMText;
 import org.apache.axiom.om.util.AXIOMUtil;
+import org.apache.axiom.soap.SOAPBody;
 import org.apache.axiom.soap.SOAPFactory;
 import org.apache.axis2.AxisFault;
 import org.apache.axis2.Constants;
@@ -41,6 +41,7 @@ import org.wso2.integration.connector.core.exception.ContentBuilderException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Iterator;
 import java.util.Map;
 import javax.activation.DataHandler;
 import javax.xml.namespace.QName;
@@ -203,7 +204,20 @@ public final class PayloadUtils {
 
         try {
             String text = IOUtils.toString(inputStream, StandardCharsets.UTF_8.name());
-            JsonUtil.getNewJsonPayload(axis2MessageContext, text, true, true);
+            OMElement newElem = JsonUtil.getNewJsonPayload(axis2MessageContext, text, false, false);
+            // Avoid removeChildren=true in getNewJsonPayload to skip the recursive removeIndentations
+            // which might be an issue for larger payloads
+            // Instead, remove all existing body children directly here without tree traversal.
+            if (newElem != null) {
+                SOAPBody body = axis2MessageContext.getEnvelope().getBody();
+                Iterator children = body.getChildren();
+                while (children.hasNext()) {
+                    if (children.next() instanceof OMNode) {
+                        children.remove();
+                    }
+                }
+                body.addChild(newElem);
+            }
         } catch (IOException e) {
             throw new ContentBuilderException("Failed to set JSON content.", e);
         }
