@@ -20,6 +20,8 @@ package org.wso2.integration.connector.core;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import org.apache.axiom.om.OMElement;
+import org.apache.axiom.om.OMNode;
+import org.apache.axiom.soap.SOAPBody;
 import org.apache.axis2.AxisFault;
 import org.apache.synapse.MessageContext;
 import org.apache.synapse.SynapseException;
@@ -34,6 +36,7 @@ import org.wso2.integration.connector.core.util.ConnectorUtils;
 import org.wso2.integration.connector.core.util.Constants;
 import org.wso2.integration.connector.core.util.PayloadUtils;
 
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 
@@ -164,7 +167,19 @@ public abstract class AbstractConnector extends AbstractMediator implements Conn
         org.apache.axis2.context.MessageContext axisMsgCtx =
                 ((Axis2MessageContext) messageContext).getAxis2MessageContext();
         try {
-            JsonUtil.getNewJsonPayload(axisMsgCtx, payload, true, true);
+            OMElement newElem = JsonUtil.getNewJsonPayload(axisMsgCtx, payload, false, false);
+            // Avoid removeChildren=true in getNewJsonPayload to skip the recursive removeIndentations
+            // which might be an issue for larger payloads
+            // Instead, remove all existing body children directly here without tree traversal.
+            if (newElem != null) {
+                SOAPBody body = axisMsgCtx.getEnvelope().getBody();
+                Iterator<OMNode> children = body.getChildren();
+                while (children.hasNext()) {
+                    children.next();
+                    children.remove();
+                }
+                body.addChild(newElem);
+            }
         } catch (AxisFault e) {
             handleException("Error overriding the message body with connector response.", e, messageContext);
         }
