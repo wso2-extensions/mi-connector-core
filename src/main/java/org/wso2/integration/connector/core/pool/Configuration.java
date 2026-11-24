@@ -17,6 +17,8 @@
  */
 package org.wso2.integration.connector.core.pool;
 
+import java.util.function.LongSupplier;
+
 /**
  * Holds the connection pool configurations
  */
@@ -42,7 +44,8 @@ public class Configuration {
     private boolean isCircuitBreakerEnabled = false;
     private int failureThreshold = 10;
     private long openDurationMillis = 60000;
-    private int openDurationProgressFactor = 1;
+    private double openDurationProgressFactor = 1;
+    private LongSupplier breakerClock;
     private long maxOpenDurationMillis = Long.MAX_VALUE;
 
     public Integer getMaxActiveConnections() {
@@ -222,12 +225,34 @@ public class Configuration {
 
     public int getOpenDurationProgressFactor() {
 
-        return openDurationProgressFactor;
+        return (int) openDurationProgressFactor;
     }
 
     public void setOpenDurationProgressFactor(int openDurationProgressFactor) {
 
         this.openDurationProgressFactor = openDurationProgressFactor;
+    }
+
+    public void setOpenDurationProgressFactor(double factor) {
+        this.openDurationProgressFactor = factor;
+    }
+
+    public double getOpenDurationProgressFactorAsDouble() {
+        return openDurationProgressFactor;
+    }
+
+    /** Supplies a monotonic millisecond clock to this configuration for pool tests. */
+    public void setBreakerClockForTesting(LongSupplier clock) {
+        this.breakerClock = clock;
+    }
+
+    public CircuitBreaker newBreaker() {
+        if (breakerClock == null) {
+            return new CircuitBreaker(failureThreshold, openDurationMillis, openDurationProgressFactor,
+                    maxOpenDurationMillis);
+        }
+        return new CircuitBreaker(failureThreshold, openDurationMillis, openDurationProgressFactor,
+                maxOpenDurationMillis, breakerClock);
     }
 
     public long getMaxOpenDurationMillis() {

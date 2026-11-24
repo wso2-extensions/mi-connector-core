@@ -21,9 +21,11 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.commons.pool.impl.GenericObjectPool;
 import org.wso2.integration.connector.core.ConnectException;
+import org.wso2.integration.connector.core.connection.PoolBusyException;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.NoSuchElementException;
 
 import static java.lang.String.format;
 
@@ -33,6 +35,8 @@ import static java.lang.String.format;
 public class ConnectionPool extends GenericObjectPool {
 
     private static final Log log = LogFactory.getLog(ConnectionPool.class);
+    private final ConnectionFactory factory;
+    private final Configuration configuration;
     private Long poolConnectionAgedTimeout;
     private Instant strat;
 
@@ -41,6 +45,8 @@ public class ConnectionPool extends GenericObjectPool {
     public ConnectionPool(ConnectionFactory factory, Configuration configuration) {
 
         super(factory);
+        this.factory = factory;
+        this.configuration = configuration;
 
         if (configuration.getMaxActiveConnections() != null) {
             this.setMaxActive(configuration.getMaxActiveConnections());
@@ -67,7 +73,7 @@ public class ConnectionPool extends GenericObjectPool {
             this.setTestOnBorrow(configuration.getTestOnBorrow());
         }
         if (configuration.getTestOnReturn() != null) {
-            this.setTestOnBorrow(configuration.getTestOnReturn());
+            this.setTestOnReturn(configuration.getTestOnReturn());
         }
         if (configuration.getTestWhileIdle() != null) {
             this.setTestWhileIdle(configuration.getTestWhileIdle());
@@ -115,6 +121,18 @@ public class ConnectionPool extends GenericObjectPool {
     }
 
 
+    public ConnectionFactory getConnectionFactory() {
+        return factory;
+    }
+
+    public Configuration getConfiguration() {
+        return configuration;
+    }
+
+    public CircuitBreaker getBreaker() {
+        return null;
+    }
+
     public Long getPoolConnectionAgedTimeout() {
         return poolConnectionAgedTimeout;
     }
@@ -142,6 +160,16 @@ public class ConnectionPool extends GenericObjectPool {
             log.debug("Borrowing object from the connection pool...");
             return super.borrowObject();
         } catch (Exception e) {
+            if (e instanceof NoSuchElementException && "Timeout waiting for idle object".equals(e.getMessage())) {
+                if (isClosed()) {
+                    throw new ConnectException(new IllegalStateException("Pool not open", e),
+                            "Error occurred while borrowing connection from the pool.");
+                }
+                throw new PoolBusyException(e);
+            }
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             throw new ConnectException(e, "Error occurred while borrowing connection from the pool.");
         }
     }

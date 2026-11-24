@@ -20,23 +20,33 @@ package org.wso2.integration.connector.core.connection;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.synapse.MessageContext;
+import org.apache.synapse.config.AbstractSynapseObserver;
+import org.apache.synapse.config.Entry;
 import org.apache.synapse.config.SynapseConfiguration;
 import org.wso2.integration.connector.core.ConnectException;
+import org.wso2.integration.connector.core.pool.CircuitBreaker;
 import org.wso2.integration.connector.core.pool.CircuitBreakerConnectionPool;
 import org.wso2.integration.connector.core.pool.Configuration;
 import org.wso2.integration.connector.core.pool.ConnectionFactory;
 import org.wso2.integration.connector.core.pool.ConnectionPool;
-import org.wso2.integration.connector.core.pool.PoolState;
 import org.wso2.integration.connector.core.util.ConnectorUtils;
 import org.wso2.integration.connector.core.util.Constants;
+import org.wso2.integration.connector.core.util.PoolTestPoints;
+import org.wso2.integration.connector.core.util.TestPoints;
 
+import java.lang.ref.WeakReference;
 import java.time.Instant;
-import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.stream.Collectors;
+import java.util.function.Predicate;
 
 import static java.lang.String.format;
 
@@ -50,23 +60,19 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
     // Stores connections/connection pools against connection code name
     // defined as <connector_name>:<connection_name>
     private final Map<String, Object> connectionMap;
-    private final Map<String, String> connectionLocalEntryMap;
+    private final Map<String, LocalEntry> connectionLocalEntryMap = new HashMap<>();
     private final Map<String, ConnectionFactory> connectionFactoryMap;
     private final Map<String, Configuration> configurationMap;
-    private final ConcurrentHashMap<String, LocalEntryUndeployObserver> observerMap = new ConcurrentHashMap();
-    private final Map<String, PoolState> connectionPoolStateMap = new ConcurrentHashMap<>();
-    private SynapseConfiguration synapseConfiguration = null;
-
-    private ReentrantLock lock = new ReentrantLock();
-    private ReentrantLock poolLock = new ReentrantLock();
+    private final Map<SynapseConfiguration, EntryObserver> observers = new WeakHashMap<>();
+    private final ReentrantLock poolLock = new ReentrantLock();
 
     static {
+        TestPoints.copy("connector-core", ConnectionHandler.class);
         handler = new ConnectionHandler();
     }
 
     private ConnectionHandler() {
         this.connectionMap = new ConcurrentHashMap<>();
-        this.connectionLocalEntryMap = new ConcurrentHashMap<>();
         this.connectionFactoryMap = new ConcurrentHashMap<>();
         this.configurationMap = new ConcurrentHashMap<>();
     }
@@ -90,30 +96,130 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      */
     public void initializeLocalEntryConnectionMapping(String connector, String connectionName,
                                                       MessageContext messageContext) {
-        String localEntryName = (String) ConnectorUtils.
-                lookupTemplateParamater(messageContext, Constants.INIT_CONFIG_KEY);
-        String uniqueConnectionName = getCode(connector, connectionName);
-        if (localEntryName != null && !connectionLocalEntryMap.containsKey(uniqueConnectionName)) {
-            connectionLocalEntryMap.put(uniqueConnectionName, localEntryName);
-            if (!observerMap.containsKey(localEntryName)) {
-                LocalEntryUndeployObserver localEntryUndeployObserver = new LocalEntryUndeployObserver(localEntryName);
-                localEntryUndeployObserver.setCallback(this); // Set the callback reference
-                SynapseConfiguration synapseConfig = messageContext.getEnvironment().getSynapseConfiguration();
-                observerMap.put(localEntryName, localEntryUndeployObserver);
-                synapseConfig.registerObserver(localEntryUndeployObserver);
-                this.synapseConfiguration = synapseConfig;
+        register(connector, getCode(connector, connectionName), messageContext, () -> { });
+    }
+
+    private void register(String connector, String key, MessageContext context, Runnable publish) {
+        String entry = context == null ? null : (String) ConnectorUtils.lookupTemplateParamater(context,
+                Constants.INIT_CONFIG_KEY);
+        SynapseConfiguration config = entry == null ? null : context.getEnvironment().getSynapseConfiguration();
+        if (register(connector, key, config, entry, publish, false)) {
+            return;
+        }
+        // Synapse iterates its observers under this monitor during entry removal.
+        synchronized (config) {
+            register(connector, key, config, entry, publish, true);
+        }
+    }
+
+    private boolean register(String connector, String key, SynapseConfiguration config, String entry,
+                             Runnable publish, boolean canInstallObserver) {
+        poolLock.lock();
+        try {
+            if (config != null) {
+                EntryObserver owner = observers.get(config);
+                if (owner == null) {
+                    if (!canInstallObserver) {
+                        return false;
+                    }
+                    owner = new EntryObserver(config);
+                    config.registerObserver(owner);
+                    observers.put(config, owner);
+                }
+                if (owner.retiring.contains(entry)) {
+                    throw new IllegalStateException("The local entry is being removed.");
+                }
+                owner.connectors.add(connector);
+                connectionLocalEntryMap.putIfAbsent(key, new LocalEntry(owner, entry));
             }
+            publish.run();
+            return true;
+        } finally {
+            poolLock.unlock();
+        }
+    }
+
+    private final class EntryObserver extends AbstractSynapseObserver {
+        private final WeakReference<SynapseConfiguration> config;
+        private final Set<String> connectors = new HashSet<>();
+        private final Set<String> retiring = new HashSet<>();
+
+        private EntryObserver(SynapseConfiguration config) {
+            this.config = new WeakReference<>(config);
+        }
+
+        @Override
+        public void entryRemoved(Entry entry) {
+            if (entry.getKey() != null) {
+                retireEntry(this, entry.getKey());
+            }
+        }
+    }
+
+    private static final class LocalEntry {
+        private final EntryObserver owner;
+        private final String name;
+
+        private LocalEntry(EntryObserver owner, String name) {
+            this.owner = owner;
+            this.name = name;
+        }
+
+        private boolean matches(EntryObserver observer, String entry) {
+            return owner == observer && name.equals(entry);
         }
     }
 
     @Override
     public void onLocalEntryUndeploy(String localEntryKey) {
-        if (localEntryKey != null && connectionLocalEntryMap.containsValue(localEntryKey)) {
-            removeLocalEntryConnections(localEntryKey);
-            connectionLocalEntryMap.values().removeIf(value -> value.equals(localEntryKey));
-            LocalEntryUndeployObserver localEntryUndeployObserver = this.observerMap.remove(localEntryKey);
-            if (synapseConfiguration != null) {
-                this.synapseConfiguration.unregisterObserver(localEntryUndeployObserver);
+        if (localEntryKey == null) {
+            return;
+        }
+        List<EntryObserver> current;
+        poolLock.lock();
+        try {
+            current = new ArrayList<>(observers.values());
+        } finally {
+            poolLock.unlock();
+        }
+        for (EntryObserver owner : current) {
+            retireEntry(owner, localEntryKey);
+        }
+    }
+
+    private void retireEntry(EntryObserver owner, String entry) {
+        Map<String, Object> removed;
+        poolLock.lock();
+        try {
+            if (!owner.retiring.add(entry)) {
+                return;
+            }
+            removed = detach(key -> {
+                LocalEntry binding = connectionLocalEntryMap.get(key);
+                return binding != null && binding.matches(owner, entry);
+            });
+            connectionLocalEntryMap.values().removeIf(binding -> binding.matches(owner, entry));
+        } finally {
+            poolLock.unlock();
+        }
+        try {
+            closeRemoved(removed, "removeLocalEntryConnections");
+        } finally {
+            SynapseConfiguration unused = null;
+            poolLock.lock();
+            try {
+                owner.retiring.remove(entry);
+                if (owner.connectors.isEmpty() && owner.retiring.isEmpty()) {
+                    SynapseConfiguration config = owner.config.get();
+                    if (config != null && observers.remove(config, owner)) {
+                        unused = config;
+                    }
+                }
+            } finally {
+                poolLock.unlock();
+            }
+            if (unused != null) {
+                unused.unregisterObserver(owner);
             }
         }
     }
@@ -129,38 +235,36 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      */
     public void createConnection(String connector, String connectionName, ConnectionFactory factory,
                                  Configuration configuration, MessageContext messageContext) {
-        initializeLocalEntryConnectionMapping(connector, connectionName, messageContext);
-        configurationMap.putIfAbsent(getCode(connector, connectionName), configuration);
-        connectionFactoryMap.putIfAbsent(getCode(connector, connectionName), factory);
         String key = getCode(connector, connectionName);
-        ConnectionPool pool = (ConnectionPool) connectionMap.get(key);
-
-        // Double-checked locking for thread safety
-        if (pool == null) {
-            poolLock.lock();
-            try {
-                pool = (ConnectionPool) connectionMap.get(key);  // Second check (inside lock)
-                if (pool == null) {
-                    log.info("Creating connection pool for " + connectionName);
-                    createConnectionPool(key, factory, configuration);
-                }
-            } finally {
-                poolLock.unlock();  // Always release lock
-            }
+        if (TestPoints.enabled()) {
+            TestPoints.hold("pool.before-register", key, "connection=" + key);
         }
+        register(connector, key, messageContext, () -> {
+            if (!connectionMap.containsKey(key)) {
+                log.info("Creating connection pool for " + connectionName);
+                CircuitBreaker breaker = configuration.isCircuitBreakerEnabled() ? configuration.newBreaker() : null;
+                createConnectionPool(key, factory, configuration, breaker, false);
+            }
+        });
     }
 
-    private void createConnectionPool(String key, ConnectionFactory factory, Configuration configuration) {
-
-        ConnectionPool pool;
-        if (configuration.isCircuitBreakerEnabled()) {
-            PoolState poolState = connectionPoolStateMap.computeIfAbsent(key, k -> new PoolState());
-            pool = new CircuitBreakerConnectionPool(factory, configuration, poolState);
-        } else {
-            pool = new ConnectionPool(factory, configuration);
+    private ConnectionPool createConnectionPool(String key, ConnectionFactory factory, Configuration configuration,
+                                                CircuitBreaker breaker, boolean rotation) {
+        ConnectionPool pool = breaker == null ? new ConnectionPool(factory, configuration)
+                : new CircuitBreakerConnectionPool(factory, configuration, breaker);
+        if (TestPoints.enabled()) {
+            PoolTestPoints.constructed(key, pool, connectionMap);
+            if (rotation) {
+                PoolTestPoints.hold("pool.before-publish", key, pool);
+            }
         }
-
-        connectionMap.putIfAbsent(key, pool);
+        connectionFactoryMap.put(key, factory);
+        configurationMap.put(key, configuration);
+        connectionMap.put(key, pool);
+        if (TestPoints.enabled()) {
+            PoolTestPoints.event("pool.published", key, pool);
+        }
+        return pool;
     }
 
     /**
@@ -173,8 +277,8 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      */
     public void createConnection(String connector, String connectionName, Connection connection
             , MessageContext messageContext) {
-        initializeLocalEntryConnectionMapping(connector, connectionName, messageContext);
-        connectionMap.putIfAbsent(getCode(connector, connectionName), connection);
+        String key = getCode(connector, connectionName);
+        register(connector, key, messageContext, () -> connectionMap.putIfAbsent(key, connection));
     }
 
     /**
@@ -187,24 +291,7 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      */
     public void createConnection(String connector, String connectionName, ConnectionFactory factory,
                                  Configuration configuration) {
-        configurationMap.putIfAbsent(getCode(connector, connectionName), configuration);
-        connectionFactoryMap.putIfAbsent(getCode(connector, connectionName), factory);
-        String key = getCode(connector, connectionName);
-        ConnectionPool pool = (ConnectionPool) connectionMap.get(key);
-
-        // Double-checked locking for thread safety
-        if (pool == null) {
-            poolLock.lock();
-            try {
-                pool = (ConnectionPool) connectionMap.get(key);  // Second check (inside lock)
-                if (pool == null) {
-                    log.info("Creating connection pool for " + connectionName);
-                    createConnectionPool(key, factory, configuration);
-                }
-            } finally {
-                poolLock.unlock();  // Always release lock
-            }
-        }
+        createConnection(connector, connectionName, factory, configuration, null);
     }
 
     /**
@@ -215,7 +302,7 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      * @param connection     Connection to be stored
      */
     public void createConnection(String connector, String connectionName, Connection connection) {
-        connectionMap.putIfAbsent(getCode(connector, connectionName), connection);
+        createConnection(connector, connectionName, connection, null);
     }
 
     /**
@@ -228,50 +315,113 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      */
     public Connection getConnection(String connector, String connectionName) throws ConnectException {
 
-        Connection connection = null;
-        String connectorCode = getCode(connector, connectionName);
-        Object connectionObj = connectionMap.get(connectorCode);
-        if (connectionObj != null) {
-            if (connectionObj instanceof ConnectionPool) {
-                if (((ConnectionPool) connectionObj).isAgedTimeoutEnabled()) {
-                    closeAgedConnectionPoolGracefully(connectorCode);
-                    if (!connectionMap.containsKey(connectorCode)) {
-                        createConnectionPool(connectorCode, connectionFactoryMap.get(connectorCode),
-                                configurationMap.get(connectorCode));
-                    }
-                }
-                connection = (Connection) ((ConnectionPool) connectionMap.get(connectorCode)).borrowObject();
-            } else if (connectionObj instanceof Connection) {
-                connection = (Connection) connectionObj;
-            }
-        } else {
+        String key = getCode(connector, connectionName);
+        Object value = connectionMap.get(key);
+        if (value == null) {
             throw new ConnectException(format("Error occurred during retrieving connection. " +
                     "Connection %s for %s connector does not exist.", connectionName, connector));
         }
-        return connection;
+        if (value instanceof Connection) {
+            return (Connection) value;
+        }
+        ConnectionPool pool = currentPool(key, value);
+        CircuitBreaker breaker = pool.getBreaker();
+        if (breaker == null) {
+            return checkout(key, pool);
+        }
+        // This caller reports no operation result, so the borrow result feeds the breaker. A busy pool is no failure.
+        CircuitBreaker.Admission admission = breaker.admit();
+        try {
+            Connection connection = checkout(key, pool);
+            admission.reportSuccess();
+            return connection;
+        } catch (ConnectException e) {
+            if (!(e instanceof PoolBusyException)) {
+                admission.reportFailure();
+            }
+            throw e;
+        } finally {
+            admission.cancelTrial();
+        }
     }
 
-    /**
-     * Closes the connection.
-     *
-     * @param connectorCode String Object
-     */
-    private void closeAgedConnectionPoolGracefully(String connectorCode) {
-        Instant current = Instant.now();
-        if (((ConnectionPool)connectionMap.get(connectorCode)).isPoolExpired(current)) {
-            lock.lock();
-            try {
-                if (connectionMap.get(connectorCode) != null && ((ConnectionPool)connectionMap.get(connectorCode)).isPoolExpired(current)) {
-                    ((ConnectionPool)connectionMap.get(connectorCode)).close();
-                    connectionMap.remove(connectorCode);
-                    connectionPoolStateMap.remove(connectorCode);
-                }
-            } catch (ConnectException e) {
-                log.error("Failed to close connection pool. ", e);
-            } finally {
-                lock.unlock();
+    public ConnectionLease borrowConnection(String connector, String connectionName) throws ConnectException {
+        String key = getCode(connector, connectionName);
+        return borrow(key, currentPool(key, connectionMap.get(key)));
+    }
+
+    private ConnectionLease borrow(String key, ConnectionPool pool) throws ConnectException {
+        CircuitBreaker breaker = pool.getBreaker();
+        CircuitBreaker.Admission admission = breaker == null ? null : breaker.admit();
+        boolean handedOff = false;
+        try {
+            Connection connection = checkout(key, pool);
+            ConnectionLease lease = new ConnectionLease(pool, connection, admission);
+            handedOff = true;
+            return lease;
+        } finally {
+            if (!handedOff && admission != null) {
+                admission.cancelTrial();
             }
         }
+    }
+
+    private Connection checkout(String key, ConnectionPool pool) throws ConnectException {
+        if (TestPoints.enabled()) {
+            PoolTestPoints.hold("pool.before-borrow", key, pool);
+            PoolTestPoints.event("pool.borrow", key, pool);
+        }
+        return (Connection) pool.borrowObject();
+    }
+
+    private ConnectionPool currentPool(String key, Object value) throws ConnectException {
+        if (!(value instanceof ConnectionPool)) {
+            throw new ConnectException("No connection pool for " + key);
+        }
+        ConnectionPool pool = (ConnectionPool) value;
+        if (!pool.isAgedTimeoutEnabled() || !pool.isPoolExpired(Instant.now())) {
+            return pool;
+        }
+        if (TestPoints.enabled()) {
+            PoolTestPoints.hold("pool.after-read-expired", key, pool);
+        }
+        ConnectionPool next;
+        poolLock.lock();
+        try {
+            Object current = connectionMap.get(key);
+            if (!(current instanceof ConnectionPool)) {
+                throw new ConnectException("No connection pool for " + key);
+            }
+            if (current != pool || !pool.isPoolExpired(Instant.now())) {
+                return (ConnectionPool) current;
+            }
+            next = createConnectionPool(key, pool.getConnectionFactory(), pool.getConfiguration(),
+                    pool.getBreaker(), true);
+        } finally {
+            poolLock.unlock();
+        }
+        closeConnection(key, pool, PoolCloseReason.AGE, "age");
+        return next;
+    }
+
+    public ConnectionFactory getConnectionFactory(String connector, String connectionName) {
+        Object pool = connectionMap.get(getCode(connector, connectionName));
+        return pool instanceof ConnectionPool ? ((ConnectionPool) pool).getConnectionFactory() : null;
+    }
+
+    public CircuitBreaker.Mode getBreakerState(String connector, String connectionName) {
+        CircuitBreaker breaker = findBreaker(connector, connectionName);
+        return breaker == null ? CircuitBreaker.Mode.CLOSED : breaker.getMode();
+    }
+
+    public boolean isOpenBeforeDeadline(String connector, String connectionName) {
+        CircuitBreaker breaker = findBreaker(connector, connectionName);
+        return breaker != null && breaker.isOpenBeforeDeadline();
+    }
+
+    private CircuitBreaker findBreaker(String connector, String connectionName) {
+        Object pool = connectionMap.get(getCode(connector, connectionName));
+        return pool instanceof ConnectionPool ? ((ConnectionPool) pool).getBreaker() : null;
     }
 
     /**
@@ -296,50 +446,72 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
      */
     public void shutdownConnections() {
 
-        for (Map.Entry<String, Object> connection : connectionMap.entrySet()) {
-            closeConnection(connection.getKey(), connection.getValue());
-        }
-        connectionMap.clear();
+        shutdown(null, "shutdownConnections()");
     }
 
-    /**
-     * Shutdown connection pools for a specified connector
-     * and unregister from the handler.
-     *
-     * @param connector Name of the connector
-     */
     public void shutdownConnections(String connector) {
+        shutdown(String.valueOf(connector), "shutdownConnections(connector)");
+    }
 
-        Iterator<Map.Entry<String, Object>> it = connectionMap.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, Object> connection = it.next();
-            if (connection.getKey().split(":")[0].equals(connector)) {
-                closeConnection(connection.getKey(), connection.getValue());
-                connectionPoolStateMap.remove(connection.getKey());
-                it.remove();
-            }
+    public void removeLocalEntryConnections(String localEntryName) {
+        Map<String, Object> removed;
+        poolLock.lock();
+        try {
+            removed = detach(key -> {
+                LocalEntry entry = connectionLocalEntryMap.get(key);
+                return entry != null && entry.name.equals(localEntryName);
+            });
+        } finally {
+            poolLock.unlock();
+        }
+        closeRemoved(removed, "removeLocalEntryConnections");
+    }
+
+    private void shutdown(String connector, String path) {
+        Predicate<String> matches = key -> connector == null || key.startsWith(connector + ":");
+        Map<String, Object> removed;
+        Map<SynapseConfiguration, EntryObserver> unused = new HashMap<>();
+        poolLock.lock();
+        try {
+            removed = detach(matches);
+            connectionLocalEntryMap.keySet().removeIf(matches);
+            observers.entrySet().removeIf(registration -> {
+                EntryObserver owner = registration.getValue();
+                if (connector == null) {
+                    owner.connectors.clear();
+                } else {
+                    owner.connectors.remove(connector);
+                }
+                if (owner.connectors.isEmpty() && owner.retiring.isEmpty()) {
+                    unused.put(registration.getKey(), owner);
+                    return true;
+                }
+                return false;
+            });
+        } finally {
+            poolLock.unlock();
+        }
+        try {
+            unused.forEach(SynapseConfiguration::unregisterObserver);
+        } finally {
+            closeRemoved(removed, path);
         }
     }
 
-    /**
-     * remove local entry and associate connections from local entry store and connection map
-     * @param localEntryName
-     */
-    public void removeLocalEntryConnections(String localEntryName) {
-        Set<String> keysToRemove = connectionLocalEntryMap.entrySet().stream()
-                .filter(entry -> localEntryName.equals(entry.getValue()))
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
-
-        // Now close each connection and remove the entry from the connectionMap
-        keysToRemove.forEach(key -> {
-            Object connection = connectionMap.get(key);
-            if (connection != null) {
-                closeConnection(connection);
-                connectionMap.remove(key);
-                connectionPoolStateMap.remove(key);
+    private Map<String, Object> detach(Predicate<String> matches) {
+        Map<String, Object> removed = new LinkedHashMap<>();
+        for (String key : connectionMap.keySet()) {
+            if (matches.test(key)) {
+                removed.put(key, connectionMap.remove(key));
+                connectionFactoryMap.remove(key);
+                configurationMap.remove(key);
             }
-        });
+        }
+        return removed;
+    }
+
+    private void closeRemoved(Map<String, Object> removed, String path) {
+        removed.forEach((key, value) -> closeConnection(key, value, PoolCloseReason.RETIRE, path));
     }
 
     /**
@@ -354,45 +526,33 @@ public class ConnectionHandler implements LocalEntryUndeployCallBack {
         return connectionMap.containsKey(getCode(connector, connectionName));
     }
 
-    /**
-     * Closes the connection.
-     *
-     * @param conName       Name of connection entry
-     * @param connectionObj Connection Object
-     */
-    private void closeConnection(String conName, Object connectionObj) {
-        if (connectionObj instanceof ConnectionPool) {
+    private void closeConnection(String key, Object value, PoolCloseReason reason, String path) {
+        if (value instanceof ConnectionPool) {
+            ConnectionPool pool = (ConnectionPool) value;
+            ConnectionFactory factory = pool.getConnectionFactory();
+            if (factory instanceof PoolCloseListener) {
+                if (TestPoints.enabled()) {
+                    PoolTestPoints.beforeClose(key, pool, reason, path, poolLock.isLocked());
+                }
+                try {
+                    ((PoolCloseListener) factory).beforePoolClose(reason);
+                } catch (RuntimeException e) {
+                    log.error("Pool close listener failed.", e);
+                }
+            }
             try {
-                ((ConnectionPool) connectionObj).close();
+                pool.close();
+                if (TestPoints.enabled()) {
+                    PoolTestPoints.event("pool.closed", key, pool);
+                }
             } catch (ConnectException e) {
                 log.error("Failed to close connection pool. ", e);
             }
-        } else if (connectionObj instanceof Connection) {
+        } else if (value instanceof Connection) {
             try {
-                ((Connection) connectionObj).close();
+                ((Connection) value).close();
             } catch (ConnectException e) {
-                log.error("Failed to close connection " + conName, e);
-            }
-        }
-    }
-
-    /**
-     * Closes the connection.
-     *
-     * @param connectionObj Connection Object
-     */
-    private void closeConnection(Object connectionObj) {
-        if (connectionObj instanceof ConnectionPool) {
-            try {
-                ((ConnectionPool) connectionObj).close();
-            } catch (ConnectException e) {
-                log.error("Failed to close connection pool. ", e);
-            }
-        } else if (connectionObj instanceof Connection) {
-            try {
-                ((Connection) connectionObj).close();
-            } catch (ConnectException e) {
-                log.error("Failed to close connection ", e);
+                log.error("Failed to close connection " + key, e);
             }
         }
     }
